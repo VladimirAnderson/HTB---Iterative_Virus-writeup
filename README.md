@@ -1,0 +1,164 @@
+# HTB---Iterative_Virus-writeup
+
+
+![1analyze](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/ff2935ab-e199-43ae-8208-a130e7281eb2)
+
+Итак, на входе имеем exe-шник HELLO_WORLD_INFECTED.exe. Открываем в IDA pro и анализируем: 
+1ая встречающая нас функция берет из PEB-структуры адрес  загруженной динамической библиотеки(KERNEL32.dll), далее - вычисляет от каждого имени функции из этой либы хэш и сравнивает его с хэшем функции
+getProcAddr, тем самым находя адрес этой функции.
+ ![hash](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/b6312a5d-0152-4c7d-8b80-c01ef10b36f1)
+
+
+После этого, с помощью функции GetProcAddr "вирус" ищет еще несколько необходимых для его работы функций.
+
+
+После нахождения всех необходимых функций, вирус проверяет на какой стадии мы находимся и, в зависимости от этого, помещает в переменную определенную константу(или вызывает код).
+
+Если посмотреть на код, то мы увидим, что он обфусцирован. На этом этапе можно предположить, что мы должны провести над этим кодом ряд операций, а если точнее - 4, т.к. на 5й итерации он вызывается.
+![case](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/749a5318-94c7-48aa-bbab-f5d82aa6d023)
+
+
+Собсно, пойдемте дальше:
+С помощью следующих нескольких функций вредоносная программа ищет в текущей директории все exe-файлы, а затем маппит их бинарный код к себе в адресное пространство.
+Найдя и разместив exeшник к себе в память, вирус проверяет его на наличие MZ-сигнатуры, разрядности файла, а также на наличие сигнатуры "THIS" - b"53494854", которая указывает на то, что файл можно
+инфицировать. 
+![check_signature](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/5d2c0b7f-e99f-427e-8977-b1211799e331)
+
+
+После проверок, описанных выше, вирус копирует секцию .ivir(свое тело) в заражаемый файл, при этом заменяя сигнатуру THIS на сигнатуру b"DEADC0DE", тем самым отмечая тот факт, что файл инфицирован.
+Цикл, где реализовано копирование тела вируса в файл, представлен на фото:
+![copy_ivir](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/357ac108-5008-407c-8fed-5f64999dd03b)
+
+
+
+
+После завершения этого процесса, вирус модифицирует кусок своей секции размером 408 байт и если присмотреться к начальным байтам модифицируемого куска памяти, то можно обнаружить, что они совпадают
+с начальными байтами обфусцированного кода, т.е. можно сделать вывод, что на данном участке кода происходит деобфускация пейлоада.
+![deobfuscate_cycle](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/9dd5b4b7-36ae-4697-ab85-c850488fca35)
+![deobfuscation_process](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/46fcf3b3-b51f-4ed4-b7e9-2f05167714d9)
+Делаем вывод: Исходя из логики работы вируса, нам необходимо выполнить деобфускацию кода, перемножив его содержимое последовательно с константами, представленными в начале(в case-блоке)
+Почему последовательно? Потому что после выполнения цикла по деобфускации кода, вирус увеличивает на единицу байт, который влияет на выбор константы, учавствующей в деобфускации:
+
+
+
+
+Для решения этой задачи я решил написать декриптор на ассемблере, т.к. мне не хотелось замарачиваться над адаптацией представления данных ассемблера к языку высокого уровня:
+
+
+
+
+
+
+;commands for compiling and debugging this code: 1) nasm -felf64 -o decrypt decrypt.asm
+                                               ; 2) ld decrypt decrypt -o decrypt.elf
+                                              
+
+DECRYPTOR:
+section .data 
+
+massive: db 0x98, 0xcd, 0x7e, 0x93, 0xe4, 0x0f, 0x5c,0xe2, 0x4c, 0x85, 0x11, 0x62, 0x7d, 0x3d, 0x94, 0x46, 0x3b, 0x4f, 0x24, 0x03, 0x74, 0xfd,
+         0xd9, 0x7e, 0xfb, 0xc4, 0x4b, 0xd3, 0x0d, 0x45, 0x54, 0x09, 0x46, 0x22, 0xc6, 0x3d, 0x7e, 0x8e, 0x73, 0x34, 0x84, 0xd4, 0xdd, 0x3c, 0xbc,    ; obfuscated section
+         0xf5, 0x2d, 0x38, 0x98, 0xc3, 0x81, 0x9c, 0xf6, 0x29, 0x85, 0x13, 0x5e, 0x10, 0x85, 0xdd, 0xd4, 0xf6, 0xfc, 0xe9, 0x4c, 0xbd, 0x5d, 0x4a,    ;
+         0x74, 0x7d, 0x97, 0x5b, 0x85, 0x5c, 0x3e, 0x96, 0x4b, 0x3d, 0xd9, 0xc2, 0x85, 0xa9, 0xd5, 0x06, 0x7a, 0x74, 0xdd, 0xb3, 0xbf, 0x8e, 0xf2,    ;
+         0xe2, 0x3d, 0x84, 0x54, 0xd4, 0xdc, 0x0e, 0x58, 0x76, 0xb0, 0xce, 0x15, 0x02, 0x4d, 0xaa, 0x52, 0x28, 0x79, 0xd6, 0x55, 0x3f, 0x84, 0xd4,    ;
+         0xdd, 0x48, 0x0e, 0x0a, 0xaf, 0x17, 0xad, 0x40, 0x86, 0xbb, 0x05, 0xa6, 0x7e, 0x54, 0x75, 0xb5, 0x99, 0xb1, 0x75, 0x8a, 0x3d, 0x24, 0x98,    ;
+         0xb9, 0x5c, 0xae, 0xed, 0xc0, 0xd1, 0x27, 0x78, 0x78, 0x78, 0xe5, 0x4a, 0x28, 0x08, 0x61, 0x85, 0x24, 0x79, 0x10, 0xdf, 0xf4, 0x49, 0x7e,
+         0xbf, 0x8e, 0xf2, 0xe2, 0x51, 0xf6, 0xd9, 0xac, 0x44, 0x14, 0x8a, 0xba, 0xa5, 0x4b, 0xa0, 0xad, 0xc9, 0x38, 0x2a, 0xfd, 0xca, 0x52, 0x72,
+         0xf7, 0x00, 0x00, 0x00, 0x9d, 0xfb, 0xb9, 0x8b, 0x38, 0x00, 0x00, 0x7b, 0xa3, 0xd4, 0x68, 0xc4, 0x8c, 0x4c, 0xbd, 0x4a, 0x4e, 0x4e, 0xb5,
+         0x1d, 0x89, 0x00, 0x00, 0x03, 0x2c, 0x3f, 0x88, 0xce, 0xef, 0x00, 0x81, 0x77, 0x14, 0xc9, 0x79, 0x9f, 0x39, 0x5c, 0x5a, 0x04, 0xad, 0x5f,
+         0xf4, 0xb1, 0xb5, 0x4c, 0xff, 0x94, 0xb3, 0xd9, 0xa6, 0x21, 0xb7, 0xb3, 0xa1, 0xd7, 0x3d, 0xb4, 0x9d, 0xde, 0xb0, 0x38, 0x30, 0x81, 0x4a,
+         0x33, 0xf2, 0x3a, 0xcc, 0x73, 0x02, 0x47, 0x06, 0xe5, 0xd4, 0xd6, 0x3d, 0x37, 0xf8, 0xa0, 0xb6, 0x3a, 0x09, 0x9b, 0x33, 0xa5, 0xcc, 0x05,
+         0xae, 0x81, 0x74, 0x99, 0x3e, 0xac, 0xb8, 0x60, 0x31, 0x94, 0x18, 0x90, 0x68, 0x60, 0x57, 0x03, 0xcf, 0xed, 0xe4, 0x5a, 0xe3, 0x36, 0x7b,
+         0xa3, 0xa1, 0x94, 0xb1, 0x46, 0x6d, 0x94, 0x18, 0x02, 0x1f, 0x69, 0xe5, 0x19, 0x36, 0xec, 0x8d, 0x52, 0x43, 0xc3, 0x79, 0xfd, 0x0a, 0xc0,
+         0x56, 0x96, 0xa5, 0x94, 0xea, 0x7f, 0x0f, 0x00, 0x00, 0x00, 0x98, 0xb9, 0x5c, 0xae, 0x8d, 0x98, 0xc3, 0x59, 0x98, 0x9f, 0x87, 0x70, 0x17,
+         0x98, 0xc3, 0x81, 0x2b, 0xc4, 0x83, 0xb2, 0x28, 0xb1, 0x07, 0x1d, 0x05, 0xd3, 0x67, 0x7b, 0x7b, 0x75, 0x6b, 0xf7, 0x82, 0x4f, 0xc3, 0xe4,
+         0xbf, 0x85, 0xa9, 0xfb, 0x0b, 0x77, 0xed, 0x6c, 0x1b, 0x00, 0x00, 0x13, 0x67, 0x1f, 0x06, 0xe5, 0xb8, 0x41, 0x30, 0x77, 0x5f, 0x88, 0x7b,
+         0x3d, 0x95, 0x2a, 0x42, 0xca, 0x10, 0xc3, 0x6c, 0x20, 0x1c, 0x04, 0x4a, 0xbc, 0x25, 0xc4, 0x0c, 0x13, 0x87
+const:  dq 0x6E2368B9C685770B                                                                                                                          ; case-constants 
+const2: dq 0xEB7FD64E061C1A3D                                                                                                                          ;after debugging you must dump this massive 
+const3: dq 0xCB8FF2D53D7505A1                                                                                                                          ;
+const4: dq 0xF1EF554206DCE4D                                                                                                                           ;
+
+
+
+
+
+
+
+section .text
+    global _start
+
+_start:
+
+xor     rdx, rdx
+xor     rax, rax
+xor     rcx, rcx
+
+jmp decrypt
+
+decrypt:
+mov     ecx, massive   
+mov     rax, const 
+mov     r8,  [rax]       
+mov     rax, r8    
+imul    rax, [rdx+rcx]
+mov     [rdx+rcx], rax
+add     rdx, 8
+cmp     rdx, 198h
+jl      decrypt
+
+xor     rdx, rdx
+xor     rax, rax
+xor     rcx, rcx
+
+decrypt2:
+
+mov     ecx, massive    
+mov     rax, const2     
+mov     r8,  [rax]       
+mov     rax, r8
+imul    rax, [rdx+rcx]
+mov     [rdx+rcx], rax
+add     rdx, 8
+cmp     rdx, 198h
+jl      decrypt2
+
+
+xor     rdx, rdx
+xor     rax, rax
+xor     rcx, rcx
+
+decrypt3:
+
+mov     ecx, massive    
+mov     rax, const3  
+mov     r8,  [rax]       
+mov     rax, r8
+imul    rax, [rdx+rcx]
+mov     [rdx+rcx], rax
+add     rdx, 8
+cmp     rdx, 198h
+jl      decrypt3
+
+
+
+
+xor     rdx, rdx
+xor     rax, rax
+xor     rcx, rcx
+
+decrypt4:
+
+mov     ecx, massive    
+mov     rax, const4           
+mov     r8,  [rax]       
+mov     rax, r8
+imul    rax, [rdx+rcx]
+mov     [rdx+rcx], rax
+add     rdx, 8
+cmp     rdx, 198h
+jl      decrypt4
+
+После снятия дампа файла, закидываем его в IDA pro  и видим наш флажок : )
+;![flag](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/0c2ce039-7888-4841-b551-9096d9337b80)
+
