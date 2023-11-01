@@ -1,4 +1,4 @@
-# HTB---Iterative_Virus-writeup
+# HTB Iterative_Virus-writeup
 
 
 ![1analyze](https://github.com/VladimirAnderson/HTB---Iterative_Virus-writeup/assets/57271893/ff2935ab-e199-43ae-8208-a130e7281eb2)
